@@ -27,7 +27,7 @@ description: >-                        # used by seo meta and the atom feed
   Um repositório para compartilhamento de assuntos de interesse pessoal.
 
 # fill in the protocol & hostname for your site, e.g., 'https://username.github.io'
-url: 'https://jullyanolino.github.io/'
+url: 'https://jullyanolino.github.io'
 
 github:
   username: jullyanolino             # change to your github username
