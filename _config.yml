@@ -5,4 +5,8 @@ plugins:
 gem "github-pages", group: :jekyll_plugins
 
 title: [The title of your site]
-description: [A short description of your site's purpose]
+description: simple blog
+author: Jullyano Lino
+email: contato@jullyanolino.com
+url: https://jullyanolino.com
+theme: jekyll-theme-midnight
