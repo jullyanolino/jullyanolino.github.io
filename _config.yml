@@ -4,8 +4,8 @@ plugins:
 
 gem "github-pages", group: :jekyll_plugins
 
-title: [The title of your site]
-description: simple blog
+title: Lab Lino
+description: A simple blog about Cybersecurity, Quantum Computing an Artificial Intelligence
 author: Jullyano Lino
 email: contato@jullyanolino.com
 url: https://jullyanolino.com
