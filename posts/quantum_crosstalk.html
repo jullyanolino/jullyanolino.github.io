@@ -1,0 +1,2366 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>QUANTUM CROSSTALK — LIVE ATTACK PANEL</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;600;700&family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+<style>
+/* ═══════════════════════════════════════════════════════════════
+   ROOT & RESET
+   ═══════════════════════════════════════════════════════════════ */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg0:        #050508;
+  --bg1:        #0a0a12;
+  --bg2:        #0f0f1c;
+  --bg3:        #151525;
+  --panel:      #0d0d1a;
+  --border:     #1e1e3a;
+  --border-hi:  #2a2a5a;
+
+  --green:      #00ff88;
+  --green-dim:  #00994d;
+  --green-glow: rgba(0,255,136,0.15);
+  --cyan:       #00d4ff;
+  --cyan-dim:   #0088aa;
+  --blue:       #3b82f6;
+  --blue-dim:   #1d4ed8;
+  --amber:      #f59e0b;
+  --orange:     #f97316;
+  --red:        #ef4444;
+  --red-bright: #ff3333;
+  --red-glow:   rgba(239,68,68,0.2);
+  --purple:     #a855f7;
+  --text:       #c8c8e8;
+  --text-dim:   #666688;
+  --text-bright:#ffffff;
+
+  --font-mono: 'IBM Plex Mono', monospace;
+  --font-hud:  'Orbitron', monospace;
+
+  --terminal-h: 130px;
+}
+
+html, body {
+  width: 100%; height: 100%;
+  overflow: hidden;
+  background: var(--bg0);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  cursor: default;
+  user-select: none;
+}
+
+/* Scanline overlay */
+body::before {
+  content: '';
+  position: fixed; inset: 0; z-index: 9999;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0,0,0,0.04) 2px,
+    rgba(0,0,0,0.04) 4px
+  );
+  pointer-events: none;
+}
+
+/* CRT vignette */
+body::after {
+  content: '';
+  position: fixed; inset: 0; z-index: 9998;
+  background: radial-gradient(ellipse at center,
+    transparent 60%,
+    rgba(0,0,0,0.55) 100%);
+  pointer-events: none;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   LAYOUT — CSS GRID
+   ═══════════════════════════════════════════════════════════════ */
+#app {
+  display: grid;
+  width: 100vw; height: 100vh;
+  grid-template-rows: 52px 1fr var(--terminal-h);
+  grid-template-columns: 1fr;
+  grid-template-areas:
+    "header"
+    "main"
+    "terminal";
+}
+
+#header   { grid-area: header; }
+#main     { grid-area: main; display: grid;
+            grid-template-columns: 1.15fr 1.1fr 0.75fr;
+            gap: 0; overflow: hidden; }
+#terminal { grid-area: terminal; }
+
+/* ═══════════════════════════════════════════════════════════════
+   HEADER
+   ═══════════════════════════════════════════════════════════════ */
+#header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 20px;
+  background: var(--bg1);
+  border-bottom: 1px solid var(--border);
+  position: relative;
+  overflow: hidden;
+}
+
+#header::after {
+  content: '';
+  position: absolute; bottom: 0; left: 0; right: 0; height: 1px;
+  background: linear-gradient(90deg,
+    transparent, var(--red), var(--amber), var(--green), transparent);
+  animation: scanH 4s linear infinite;
+}
+
+@keyframes scanH {
+  from { transform: translateX(-100%); }
+  to   { transform: translateX(100%); }
+}
+
+.hdr-title {
+  font-family: var(--font-hud);
+  font-size: 13px;
+  font-weight: 900;
+  letter-spacing: 3px;
+  color: var(--text-bright);
+  text-shadow: 0 0 20px var(--red), 0 0 40px rgba(239,68,68,0.3);
+}
+
+.hdr-title span { color: var(--red-bright); }
+
+.hdr-status {
+  display: flex; gap: 24px; align-items: center;
+}
+
+.status-chip {
+  display: flex; align-items: center; gap: 7px;
+  font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase;
+  padding: 4px 10px;
+  border: 1px solid var(--border-hi);
+  background: var(--bg2);
+  color: var(--text-dim);
+}
+
+.status-chip .dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--green-dim);
+  animation: blink 2s ease-in-out infinite;
+}
+
+.status-chip.attacking .dot {
+  background: var(--red-bright);
+  box-shadow: 0 0 8px var(--red);
+  animation: blink-fast 0.5s ease-in-out infinite;
+}
+
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.3} }
+@keyframes blink-fast { 0%,100%{opacity:1} 50%{opacity:0.2} }
+
+/* P(correct) meter */
+.p-meter {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 10px; letter-spacing: 1px;
+}
+.p-meter-label { color: var(--text-dim); text-transform: uppercase; }
+.p-meter-bar {
+  width: 120px; height: 6px;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  position: relative; overflow: hidden;
+}
+.p-meter-fill {
+  height: 100%;
+  background: var(--green);
+  transition: width 0.4s ease, background 0.4s ease;
+  box-shadow: 0 0 8px currentColor;
+}
+.p-meter-value {
+  font-family: var(--font-hud);
+  font-size: 12px; font-weight: 700;
+  color: var(--green);
+  min-width: 44px; text-align: right;
+  transition: color 0.4s;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   PANEL COMMONS
+   ═══════════════════════════════════════════════════════════════ */
+.panel {
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+  overflow: hidden;
+  position: relative;
+  display: flex; flex-direction: column;
+}
+.panel:last-child { border-right: none; }
+
+.panel-header {
+  padding: 10px 14px 8px;
+  border-bottom: 1px solid var(--border);
+  display: flex; justify-content: space-between; align-items: center;
+  background: var(--bg2);
+  flex-shrink: 0;
+}
+
+.panel-title {
+  font-family: var(--font-hud);
+  font-size: 9px; font-weight: 700;
+  letter-spacing: 2.5px; text-transform: uppercase;
+  color: var(--cyan);
+}
+
+.panel-badge {
+  font-size: 9px; letter-spacing: 1px;
+  padding: 2px 7px;
+  border: 1px solid var(--border-hi);
+  color: var(--text-dim);
+  background: var(--bg1);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   LEFT PANEL — 3D TOPOLOGY
+   ═══════════════════════════════════════════════════════════════ */
+#topology-panel { }
+#topology-canvas-wrapper {
+  flex: 1; position: relative; overflow: hidden;
+}
+#topology-canvas {
+  display: block;
+  /* width/height intentionally absent — Three.js setSize() is sole authority */
+}
+
+/* Qubit labels overlay */
+.qubit-labels {
+  position: absolute; inset: 0; pointer-events: none;
+}
+.q-label {
+  position: absolute;
+  font-family: var(--font-hud);
+  font-size: 9px; letter-spacing: 1px;
+  color: var(--green);
+  text-shadow: 0 0 8px var(--green);
+  transform: translate(-50%, -50%);
+  white-space: nowrap;
+}
+.q-label.attack { color: var(--red); text-shadow: 0 0 8px var(--red); }
+.q-label.boundary { color: var(--amber); text-shadow: 0 0 8px var(--amber); }
+
+/* Attack zone info overlay */
+.attack-overlay-info {
+  position: absolute; bottom: 12px; left: 14px; right: 14px;
+  display: flex; justify-content: space-between;
+  pointer-events: none;
+}
+.zone-badge {
+  padding: 4px 8px;
+  font-size: 9px; letter-spacing: 1.5px; text-transform: uppercase;
+  border: 1px solid;
+}
+.zone-badge.victim  { border-color: var(--cyan);   color: var(--cyan); }
+.zone-badge.boundary{ border-color: var(--amber);  color: var(--amber); }
+.zone-badge.attacker{ border-color: var(--red);    color: var(--red); }
+
+/* ═══════════════════════════════════════════════════════════════
+   CENTRE PANEL — HISTOGRAM
+   ═══════════════════════════════════════════════════════════════ */
+#histogram-panel { }
+#histogram-wrapper {
+  flex: 1; display: flex; flex-direction: column;
+  padding: 10px 14px 6px;
+  gap: 8px;
+}
+
+/* TVD / metrics row */
+.metric-row {
+  display: flex; gap: 10px; flex-shrink: 0;
+}
+.metric-box {
+  flex: 1; padding: 7px 10px;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+}
+.metric-box .m-label {
+  font-size: 8px; letter-spacing: 1.5px; text-transform: uppercase;
+  color: var(--text-dim); margin-bottom: 3px;
+}
+.metric-box .m-value {
+  font-family: var(--font-hud);
+  font-size: 16px; font-weight: 700;
+  color: var(--green);
+  transition: color 0.4s;
+}
+.metric-box .m-value.warn  { color: var(--amber); }
+.metric-box .m-value.crit  { color: var(--red); }
+
+#histogram-svg-container {
+  flex: 1; min-height: 0;
+}
+
+/* Histogram D3 inline styles via JS, but base here */
+.bar-victim   { fill: #3b82f6; }
+.bar-target   { fill: var(--green); }
+.bar-attacked { fill: var(--red); }
+.axis-label   { fill: var(--text-dim); font-family: var(--font-mono); font-size: 10px; }
+
+/* Defense comparison overlay toggle */
+.defense-compare {
+  display: flex; align-items: center; gap: 8px;
+  flex-shrink: 0; margin-top: 2px;
+}
+.legend-item {
+  display: flex; align-items: center; gap: 5px;
+  font-size: 9px; color: var(--text-dim); letter-spacing: 0.5px;
+}
+.legend-dot { width: 10px; height: 10px; border-radius: 50%; }
+
+/* ═══════════════════════════════════════════════════════════════
+   RIGHT PANEL — CONTROLS + BLOCH SPHERES
+   ═══════════════════════════════════════════════════════════════ */
+#controls-panel { }
+#controls-inner {
+  flex: 1; overflow-y: auto; padding: 12px 14px;
+  display: flex; flex-direction: column; gap: 14px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+/* ATTACK BUTTON */
+#btn-attack {
+  width: 100%;
+  padding: 16px 14px 18px 14px;       /* mais espaço embaixo */
+  font-family: var(--font-hud);
+  font-size: 13px;
+  font-weight: 900;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  color: var(--text-bright);
+  background: var(--bg2);
+  border: 2px solid var(--red);
+  cursor: pointer;
+  position: relative;
+  overflow: visible;                   /* ← importante para não cortar sombra/texto */
+  transition: all 0.2s;
+  text-shadow: 0 0 10px var(--red);
+  box-shadow: 0 0 20px rgba(239,68,68,0.2), inset 0 0 20px rgba(239,68,68,0.05);
+  line-height: 1;                      /* ← evita espaçamento indesejado */
+  display: flex;                       /* ajuda no centralização */
+  align-items: center;
+  justify-content: center;
+}
+
+#btn-attack::before {
+  content: '';
+  position: absolute; inset: 0;
+  background: var(--red);
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+#btn-attack:hover::before { opacity: 0.12; }
+#btn-attack:hover { box-shadow: 0 0 30px rgba(239,68,68,0.4); }
+#btn-attack.active {
+  border-color: var(--red-bright);
+  background: rgba(239,68,68,0.15);
+  animation: btn-pulse 1s ease-in-out infinite;
+}
+@keyframes btn-pulse {
+  0%,100% { box-shadow: 0 0 20px rgba(239,68,68,0.3); }
+  50%      { box-shadow: 0 0 50px rgba(239,68,68,0.7), 0 0 80px rgba(239,68,68,0.2); }
+}
+#btn-attack span { position: relative; z-index: 1; line-height: 1.05;}
+
+/* INTENSITY SLIDER */
+.ctrl-section { display: flex; flex-direction: column; gap: 6px; }
+.ctrl-label {
+  font-size: 9px; letter-spacing: 2px; text-transform: uppercase;
+  color: var(--text-dim); display: flex; justify-content: space-between;
+  align-items: center;
+}
+.ctrl-label .val {
+  font-family: var(--font-hud); font-size: 12px; font-weight: 700;
+  color: var(--text);
+  transition: color 0.3s;
+}
+
+input[type=range] {
+  -webkit-appearance: none;
+  width: 100%; height: 4px;
+  background: var(--bg3);
+  border-radius: 0;
+  outline: none;
+  border: 1px solid var(--border);
+}
+input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px; height: 14px;
+  background: var(--text-bright);
+  border: 2px solid var(--red);
+  cursor: pointer;
+  box-shadow: 0 0 8px var(--red);
+}
+input[type=range]::-moz-range-thumb {
+  width: 14px; height: 14px;
+  background: var(--text-bright);
+  border: 2px solid var(--red);
+  cursor: pointer;
+}
+
+/* DEFENSE BUTTONS */
+.section-divider {
+  font-size: 9px; letter-spacing: 2.5px; text-transform: uppercase;
+  color: var(--text-dim);
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+  margin-top: 2px;
+}
+
+.defense-btn {
+  width: 100%; padding: 9px 12px;
+  font-family: var(--font-mono);
+  font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase;
+  color: var(--text-dim);
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  display: flex; justify-content: space-between; align-items: center;
+  transition: all 0.2s;
+  margin-bottom: 6px;
+}
+.defense-btn:hover { border-color: var(--border-hi); color: var(--text); }
+.defense-btn.active {
+  border-color: var(--green);
+  color: var(--green);
+  background: var(--green-glow);
+  text-shadow: 0 0 8px var(--green);
+}
+.defense-btn .eff-bar {
+  width: 60px; height: 4px;
+  background: var(--bg3);
+  position: relative; overflow: hidden;
+}
+.defense-btn .eff-fill {
+  height: 100%;
+  background: var(--green-dim);
+  transition: width 0.4s;
+}
+.defense-btn.active .eff-fill { background: var(--green); }
+
+/* BLOCH SPHERE PANEL */
+.bloch-row {
+  display: flex; gap: 6px; justify-content: space-between;
+}
+.bloch-item {
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  flex: 1;
+}
+.bloch-label {
+  font-size: 9px; color: var(--text-dim); letter-spacing: 1px;
+}
+canvas.bloch-canvas {
+  border: 1px solid var(--border);
+  background: var(--bg2);
+  display: block;
+  width: 140px !important;
+  height: 140px !important;
+}
+.bloch-coherence {
+  font-family: var(--font-hud);
+  font-size: 9px; font-weight: 700;
+  color: var(--green);
+  transition: color 0.4s;
+}
+
+/* SPEED CONTROL */
+.speed-btns {
+  display: flex; gap: 4px;
+}
+.speed-btn {
+  flex: 1; padding: 5px;
+  font-family: var(--font-hud); font-size: 9px; letter-spacing: 1px;
+  background: var(--bg2); border: 1px solid var(--border);
+  color: var(--text-dim); cursor: pointer; transition: all 0.15s;
+}
+.speed-btn.active { border-color: var(--cyan); color: var(--cyan); }
+
+/* ═══════════════════════════════════════════════════════════════
+   TERMINAL
+   ═══════════════════════════════════════════════════════════════ */
+#terminal {
+  background: var(--bg1);
+  border-top: 1px solid var(--border);
+  display: flex; flex-direction: column;
+  overflow: hidden;
+}
+
+/* ── Drag handle ── */
+#terminal-drag-handle {
+  height: 10px;
+  cursor: ns-resize;
+  background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+  user-select: none;
+  -webkit-user-select: none;
+  transition: background 0.15s;
+  position: relative;
+}
+#terminal-drag-handle:hover { background: var(--bg3); }
+#terminal-drag-handle::before {
+  content: '';
+  width: 44px; height: 3px;
+  border-radius: 2px;
+  background: var(--border-hi);
+  transition: background 0.15s;
+}
+#terminal-drag-handle:hover::before  { background: var(--cyan-dim); }
+#terminal-drag-handle.dragging       { background: var(--bg3); }
+#terminal-drag-handle.dragging::before { background: var(--cyan); box-shadow: 0 0 6px var(--cyan); }
+
+#terminal-header {
+  padding: 6px 14px;
+  border-bottom: 1px solid var(--border);
+  display: flex; justify-content: space-between; align-items: center;
+  flex-shrink: 0;
+}
+#terminal-title {
+  font-family: var(--font-hud); font-size: 8px;
+  letter-spacing: 2px; color: var(--green-dim);
+}
+#terminal-log {
+  flex: 1; overflow-y: auto; overflow-x: hidden;
+  padding: 5px 14px;
+  font-size: 13px; line-height: 1.65;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+.log-line { display: flex; gap: 12px; }
+.log-ts   { color: var(--text-dim); flex-shrink: 0; }
+.log-src  { flex-shrink: 0; min-width: 96px; }
+.log-msg  { }
+.log-ok   { color: var(--green); }
+.log-warn { color: var(--amber); }
+.log-crit { color: var(--red); animation: log-flash 1s ease-in-out 3; }
+.log-info { color: var(--cyan); }
+.log-def  { color: var(--purple); }
+
+@keyframes log-flash {
+  0%,100%{opacity:1} 50%{opacity:0.4}
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   HARDWARE EVIDENCE PANEL
+   ═══════════════════════════════════════════════════════════════ */
+.hw-select {
+  width: 100%;
+  padding: 7px 10px;
+  background: var(--bg2);
+  border: 1px solid var(--border-hi);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.5px;
+  cursor: pointer;
+  outline: none;
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6'><path d='M0 0l5 6 5-6z' fill='%23666688'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  padding-right: 28px;
+  transition: border-color 0.2s;
+}
+.hw-select:hover  { border-color: var(--cyan-dim); }
+.hw-select:focus  { border-color: var(--cyan); }
+.hw-select option { background: #0a0a12; color: #c8c8e8; }
+
+.hw-card {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  padding: 10px;
+  flex-direction: column;
+  gap: 7px;
+  margin-top: 2px;
+}
+.hw-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.hw-backend-name {
+  font-family: var(--font-hud);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  color: var(--cyan);
+}
+.hw-role-badge {
+  font-size: 9px;
+  letter-spacing: 1.5px;
+  padding: 2px 7px;
+  border: 1px solid;
+  font-family: var(--font-hud);
+  font-weight: 700;
+}
+.hw-role-badge.victim { border-color: var(--cyan);  color: var(--cyan); }
+.hw-role-badge.attack { border-color: var(--red);   color: var(--red);  }
+
+.hw-job-id {
+  font-size: 9px;
+  color: var(--text-dim);
+  letter-spacing: 0.3px;
+  word-break: break-all;
+}
+
+.hw-bar-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.hw-bar-label {
+  font-size: 9px;
+  color: var(--text-dim);
+  min-width: 62px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+.hw-bar-track {
+  flex: 1;
+  height: 5px;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+.hw-bar-fill {
+  height: 100%;
+  transition: width 0.6s cubic-bezier(.4,0,.2,1);
+}
+.hw-bar-value {
+  font-family: var(--font-hud);
+  font-size: 10px;
+  font-weight: 700;
+  min-width: 44px;
+  text-align: right;
+  transition: color 0.4s;
+}
+
+.hw-compare {
+  border-top: 1px solid var(--border);
+  padding-top: 7px;
+  flex-direction: column;
+  gap: 4px;
+}
+.hw-compare-title {
+  font-size: 8px;
+  color: var(--text-dim);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  margin-bottom: 2px;
+}
+.hw-compare-role {
+  font-size: 8px;
+  min-width: 40px;
+  letter-spacing: 0.5px;
+}
+.hw-delta {
+  font-family: var(--font-hud);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--red);
+  letter-spacing: 1px;
+  text-align: right;
+  margin-top: 2px;
+}
+
+.hw-status-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-top: 1px solid var(--border);
+  padding-top: 7px;
+}
+.hw-status {
+  font-size: 9px;
+  font-family: var(--font-hud);
+  font-weight: 700;
+  letter-spacing: 2px;
+  padding: 2px 8px;
+  border: 1px solid;
+}
+.hw-status.nominal  { border-color: var(--green); color: var(--green); }
+.hw-status.degraded { border-color: var(--amber); color: var(--amber); }
+.hw-status.corrupted{
+  border-color: var(--red); color: var(--red);
+  animation: log-flash 1.5s ease-in-out infinite;
+}
+.hw-shots {
+  font-size: 9px;
+  color: var(--text-dim);
+  margin-left: auto;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   NOISE PARTICLES (CSS)
+   ═══════════════════════════════════════════════════════════════ */
+.noise-particle {
+  position: absolute;
+  width: 3px; height: 3px;
+  border-radius: 50%;
+  background: var(--red);
+  pointer-events: none;
+  animation: particle-fly 0.8s ease-out forwards;
+  box-shadow: 0 0 6px var(--red);
+}
+@keyframes particle-fly {
+  from { opacity: 1; transform: translate(0,0) scale(1); }
+  to   { opacity: 0; transform: translate(var(--tx),var(--ty)) scale(0); }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   GLITCH EFFECT on strong attack
+   ═══════════════════════════════════════════════════════════════ */
+.glitch {
+  animation: glitch-anim 0.15s linear 1;
+}
+@keyframes glitch-anim {
+  0%   { filter: none; }
+  25%  { filter: hue-rotate(90deg) brightness(1.3); clip-path: inset(20% 0 60% 0); transform: translateX(-4px); }
+  50%  { filter: hue-rotate(-90deg) brightness(0.8); clip-path: inset(60% 0 10% 0); transform: translateX(4px); }
+  75%  { filter: none; clip-path: none; transform: translateX(-2px); }
+  100% { filter: none; transform: none; clip-path: none; }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   TVD PROGRESS ARC
+   ═══════════════════════════════════════════════════════════════ */
+.tvd-gauge {
+  display: flex; align-items: center; gap: 10px;
+}
+svg.gauge-svg { overflow: visible; }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- ══════════════ HEADER ══════════════ -->
+  <div id="header">
+    <div class="hdr-title">
+      <span>☠</span> QUANTUM CROSSTALK &nbsp;|&nbsp; LIVE ATTACK PANEL &nbsp;|&nbsp; DEF CON QUANTUM VILLAGE
+    </div>
+    <div class="hdr-status">
+      <div class="status-chip" id="status-chip">
+        <div class="dot"></div>
+        <span id="status-text">NOMINAL</span>
+      </div>
+      <div class="p-meter">
+        <span class="p-meter-label">P(|110⟩)</span>
+        <div class="p-meter-bar">
+          <div class="p-meter-fill" id="p-fill" style="width:70%"></div>
+        </div>
+        <span class="p-meter-value" id="p-value">70.0%</span>
+      </div>
+      <div class="p-meter">
+        <span class="p-meter-label">TVD</span>
+        <div class="p-meter-bar">
+          <div class="p-meter-fill" id="tvd-fill" style="width:0%;background:var(--red)"></div>
+        </div>
+        <span class="p-meter-value" id="tvd-value" style="color:var(--green)">0.00</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════ MAIN ══════════════ -->
+  <div id="main">
+
+    <!-- ─── LEFT: 3D Topology ─── -->
+    <div class="panel" id="topology-panel">
+      <div class="panel-header">
+        <span class="panel-title">IBM Quantum Topology — ibm_hanoi (5-qubit segment)</span>
+        <span class="panel-badge">SUPERCONDUCTING</span>
+      </div>
+      <div id="topology-canvas-wrapper">
+        <canvas id="topology-canvas"></canvas>
+        <div class="qubit-labels" id="qubit-labels"></div>
+        <!-- Bit mapping legend — top left -->
+        <div style="position:absolute;top:10px;left:12px;pointer-events:none;
+                    font-family:'IBM Plex Mono',monospace;line-height:1.8;">
+          <div style="font-size:9px;color:#444466;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:4px;">
+            Grover target&nbsp; |q₂q₁q₀⟩ = |110⟩
+          </div>
+          <div style="display:flex;gap:6px;align-items:center;">
+            <span style="font-size:9px;color:#666688;">MSB</span>
+            <span id="bit2-box" style="padding:2px 7px;border:1px solid #f59e0b;color:#f59e0b;
+                  font-size:10px;font-weight:700;font-family:'Orbitron',monospace;
+                  box-shadow:0 0 6px rgba(245,158,11,0.3);">q[2]=1</span>
+            <span id="bit1-box" style="padding:2px 7px;border:1px solid #3b82f6;color:#3b82f6;
+                  font-size:10px;font-weight:700;font-family:'Orbitron',monospace;
+                  box-shadow:0 0 6px rgba(59,130,246,0.3);">q[1]=1</span>
+            <span id="bit0-box" style="padding:2px 7px;border:1px solid #3b82f6;color:#3b82f6;
+                  font-size:10px;font-weight:700;font-family:'Orbitron',monospace;
+                  box-shadow:0 0 6px rgba(59,130,246,0.3);">q[0]=0</span>
+            <span style="font-size:9px;color:#666688;">LSB</span>
+          </div>
+          <div id="bitstring-status" style="font-size:9px;color:#00ff88;margin-top:3px;letter-spacing:1px;
+                text-shadow:0 0 6px rgba(0,255,136,0.4);">
+            ✓ CORRECT RESULT
+          </div>
+        </div>
+
+        <!-- CNOT counter overlay — top right -->
+        <div style="position:absolute;top:10px;right:12px;pointer-events:none;text-align:right;
+                    font-family:'IBM Plex Mono',monospace;">
+          <div style="font-size:9px;color:#444466;letter-spacing:1px;text-transform:uppercase;">Attack CNOTs</div>
+          <div id="cnot-counter" style="font-family:'Orbitron',monospace;font-size:18px;
+                font-weight:700;color:#333;transition:color 0.3s;">0</div>
+          <div style="font-size:8px;color:#444466;">q[3]↔q[4] pairs/layer</div>
+        </div>
+
+        <div class="attack-overlay-info">
+          <span class="zone-badge victim">← VICTIM q[0–2]</span>
+          <span class="zone-badge boundary">CROSSTALK q[2]/q[3]</span>
+          <span class="zone-badge attacker">ATTACKER q[3–4] →</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ─── CENTRE: Histogram ─── -->
+    <div class="panel" id="histogram-panel">
+      <div class="panel-header">
+        <span class="panel-title">Grover Output Distribution — |q₂q₁q₀⟩</span>
+        <span class="panel-badge" id="algo-status-badge">TARGET: |110⟩</span>
+      </div>
+      <div id="histogram-wrapper">
+        <div class="metric-row">
+          <div class="metric-box">
+            <div class="m-label">P(correct)</div>
+            <div class="m-value" id="m-pcorrect">70.0%</div>
+          </div>
+          <div class="metric-box">
+            <div class="m-label">TVD (0=ideal · 0.5=noise)</div>
+            <div class="m-value" id="m-tvd">0.000</div>
+          </div>
+          <div class="metric-box">
+            <div class="m-label">Attack strength</div>
+            <div class="m-value" id="m-xt">0%</div>
+          </div>
+          <div class="metric-box">
+            <div class="m-label">Shots / sec</div>
+            <div class="m-value" id="m-shots">8192</div>
+          </div>
+        </div>
+        <div id="histogram-svg-container"></div>
+        <div class="defense-compare">
+          <div class="legend-item">
+            <div class="legend-dot" style="background:var(--blue)"></div>
+            <span>No attack baseline</span>
+          </div>
+          <div class="legend-item">
+            <div class="legend-dot" style="background:var(--red)"></div>
+            <span>Under attack</span>
+          </div>
+          <div class="legend-item">
+            <div class="legend-dot" style="background:var(--green)"></div>
+            <span>With active defense</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ─── RIGHT: Controls + Bloch ─── -->
+    <div class="panel" id="controls-panel">
+      <div class="panel-header">
+        <span class="panel-title">Attack Controls</span>
+        <span class="panel-badge" id="defense-count-badge">0 DEFENSES</span>
+      </div>
+      <div id="controls-inner">
+
+        <!-- Attack button -->
+        <button id="btn-attack" onclick="toggleAttack()">
+          <span id="btn-label">⚡ LAUNCH ATTACK</span>
+        </button>
+
+        <!-- Scenario presets -->
+        <div class="ctrl-section">
+          <div class="ctrl-label">Scenario Preset</div>
+          <div class="speed-btns">
+            <button class="speed-btn scenario-btn active" id="sc-off"  onclick="setScenario(0,   this)">OFF</button>
+            <button class="speed-btn scenario-btn"        id="sc-mild" onclick="setScenario(25,  this)">MILD</button>
+            <button class="speed-btn scenario-btn"        id="sc-mod"  onclick="setScenario(55,  this)">MOD</button>
+            <button class="speed-btn scenario-btn"        id="sc-full" onclick="setScenario(100, this)">FULL</button>
+          </div>
+        </div>
+
+        <!-- Intensity slider -->
+        <div class="ctrl-section">
+          <div class="ctrl-label">
+            Attack Intensity (CNOT pairs)
+            <span class="val" id="intensity-val">0%</span>
+          </div>
+          <input type="range" id="slider-intensity" min="0" max="100" value="0"
+                 oninput="setIntensity(this.value)">
+        </div>
+
+        <!-- Speed + rotation -->
+        <div class="ctrl-section">
+          <div class="ctrl-label">Simulation Speed</div>
+          <div class="speed-btns">
+            <button class="speed-btn active" onclick="setSpeed(1,this)">1×</button>
+            <button class="speed-btn" onclick="setSpeed(2,this)">2×</button>
+            <button class="speed-btn" onclick="setSpeed(4,this)">4×</button>
+            <button class="speed-btn" onclick="setSpeed(8,this)">8×</button>
+          </div>
+          <div class="speed-btns" style="margin-top:5px;">
+            <button class="speed-btn active" id="btn-rot" onclick="toggleRotation()"
+                    style="flex:none;width:100%;letter-spacing:2px;">
+              3D ROTATION: ON
+            </button>
+          </div>
+        </div>
+
+        <!-- Defenses -->
+        <div class="section-divider">Active Defenses</div>
+
+        <div>
+          <button class="defense-btn" id="btn-d1" onclick="toggleDefense(1)">
+            <span>D1: Circuit Separation (r=2)</span>
+            <div class="eff-bar"><div class="eff-fill" style="width:65%"></div></div>
+          </button>
+          <button class="defense-btn" id="btn-d2" onclick="toggleDefense(2)">
+            <span>D2: RL Qubit Allocation</span>
+            <div class="eff-bar"><div class="eff-fill" style="width:80%"></div></div>
+          </button>
+          <button class="defense-btn" id="btn-d3" onclick="toggleDefense(3)">
+            <span>D3: Spectator Qubit</span>
+            <div class="eff-bar"><div class="eff-fill" style="width:75%"></div></div>
+          </button>
+        </div>
+
+        <!-- BLOCH SPHERES — two-vector comparison -->
+        <div class="section-divider">Qubit State (Bloch Vector)</div>
+        <div style="font-size:8px;color:var(--text-dim);letter-spacing:0.5px;margin-bottom:4px;line-height:1.5;">
+          <span style="color:#ef4444;">Red</span> = under attack &nbsp;|&nbsp;
+          <span style="color:#00ff88;">Green</span> = with defense<br>
+          Vector length = coherence. Zero = destroyed.
+        </div>
+        <div class="bloch-row" id="bloch-row">
+          <div class="bloch-item">
+            <span class="bloch-label">q[0] · bit 0 = <span style="color:#3b82f6;">0</span></span>
+            <canvas class="bloch-canvas" id="bloch0" width="140" height="140"></canvas>
+            <span class="bloch-coherence" id="bloch0-val">|BV|=1.00</span>
+          </div>
+          <div class="bloch-item">
+            <span class="bloch-label">q[1] · bit 1 = <span style="color:#3b82f6;">1</span></span>
+            <canvas class="bloch-canvas" id="bloch1" width="140" height="140"></canvas>
+            <span class="bloch-coherence" id="bloch1-val">|BV|=1.00</span>
+          </div>
+          <div class="bloch-item">
+            <span class="bloch-label" style="color:var(--amber);">q[2] · bit 2 = 1 ⚠</span>
+            <canvas class="bloch-canvas" id="bloch2" width="140" height="140"></canvas>
+            <span class="bloch-coherence" id="bloch2-val">|BV|=1.00</span>
+          </div>
+        </div>
+        <!-- Defense recovery meter -->
+        <div style="display:flex;flex-direction:column;gap:4px;margin-top:4px;" id="recovery-meters">
+          <div style="font-size:8px;color:var(--text-dim);letter-spacing:1px;">
+            q[2] COHERENCE RECOVERY
+          </div>
+          <div style="display:flex;gap:6px;align-items:center;">
+            <span style="font-size:8px;color:var(--red);min-width:56px;">No defense</span>
+            <div style="flex:1;height:4px;background:var(--bg3);border:1px solid var(--border);">
+              <div id="rec-attacked" style="height:100%;background:var(--red);width:100%;transition:width 0.4s;"></div>
+            </div>
+            <span style="font-family:'Orbitron',monospace;font-size:9px;color:var(--red);min-width:36px;" id="rec-attacked-val">100%</span>
+          </div>
+          <div style="display:flex;gap:6px;align-items:center;">
+            <span style="font-size:8px;color:var(--green);min-width:56px;">Defense on</span>
+            <div style="flex:1;height:4px;background:var(--bg3);border:1px solid var(--border);">
+              <div id="rec-defended" style="height:100%;background:var(--green);width:0%;transition:width 0.4s;"></div>
+            </div>
+            <span style="font-family:'Orbitron',monospace;font-size:9px;color:var(--green);min-width:36px;" id="rec-defended-val">0%</span>
+          </div>
+        </div>
+
+        <!-- Paper reference -->
+        <div class="section-divider">Reference</div>
+        <div style="font-size:9px;color:var(--text-dim);line-height:1.7;letter-spacing:0.3px;">
+          Harper et al. (2025)<br>
+          arXiv:2402.02753v2<br>
+          U. Melbourne / CSIRO<br><br>
+          Validated: ibm_hanoi (27q)<br>
+          Attack boundary: CX(12,13)<br>
+          CX error: 3.0% · T₂(q13)=21.5µs
+        </div>
+
+        <!-- ── Real Hardware Evidence ── -->
+        <div class="section-divider">Real Hardware Evidence</div>
+        <div style="font-size:9px;color:var(--text-dim);letter-spacing:0.3px;margin-bottom:5px;line-height:1.5;">
+          Field validation — 3 backends · 8192 shots each<br>
+          <span style="color:var(--purple);">Independent of simulation controls.</span>
+        </div>
+
+        <select class="hw-select" id="hw-select" onchange="showEvidence(this.value)">
+          <option value="">— select backend / role —</option>
+          <optgroup label="ibm_torino">
+            <option value="0">ibm_torino · victim  (P=62.2%)</option>
+            <option value="1">ibm_torino · attack  (P=36.6%)</option>
+          </optgroup>
+          <optgroup label="ibm_fez">
+            <option value="2">ibm_fez · victim     (P=63.3%)</option>
+            <option value="3">ibm_fez · attack     (P=21.8%)</option>
+          </optgroup>
+          <optgroup label="ibm_marrakesh">
+            <option value="4">ibm_marrakesh · victim  (P=62.6%)</option>
+            <option value="5">ibm_marrakesh · attack  (P=44.9%)</option>
+          </optgroup>
+        </select>
+
+        <div id="hw-card" class="hw-card" style="display:none;">
+          <div class="hw-card-header">
+            <span class="hw-backend-name" id="hw-backend">—</span>
+            <span class="hw-role-badge" id="hw-role-badge">—</span>
+          </div>
+          <div class="hw-job-id" id="hw-job-id">Job: —</div>
+
+          <div style="display:flex;flex-direction:column;gap:5px;">
+            <div class="hw-bar-item">
+              <span class="hw-bar-label">P(|110⟩)</span>
+              <div class="hw-bar-track">
+                <div class="hw-bar-fill" id="hw-p-fill" style="width:0%;background:var(--green)"></div>
+              </div>
+              <span class="hw-bar-value" id="hw-p-val">—</span>
+            </div>
+            <div class="hw-bar-item">
+              <span class="hw-bar-label">TVD</span>
+              <div class="hw-bar-track">
+                <div class="hw-bar-fill" id="hw-tvd-fill" style="width:0%;background:var(--red)"></div>
+              </div>
+              <span class="hw-bar-value" id="hw-tvd-val">—</span>
+            </div>
+          </div>
+
+          <div class="hw-compare" id="hw-compare" style="display:flex;">
+            <div class="hw-compare-title">Backend · victim vs attack · P(|110⟩)</div>
+            <div class="hw-bar-item">
+              <span class="hw-compare-role" style="color:var(--cyan);">victim</span>
+              <div class="hw-bar-track">
+                <div class="hw-bar-fill" id="hw-cmp-v" style="width:0%;background:var(--cyan)"></div>
+              </div>
+              <span class="hw-bar-value" id="hw-cmp-v-val" style="color:var(--cyan);">—</span>
+            </div>
+            <div class="hw-bar-item">
+              <span class="hw-compare-role" style="color:var(--red);">attack</span>
+              <div class="hw-bar-track">
+                <div class="hw-bar-fill" id="hw-cmp-a" style="width:0%;background:var(--red)"></div>
+              </div>
+              <span class="hw-bar-value" id="hw-cmp-a-val" style="color:var(--red);">—</span>
+            </div>
+            <div class="hw-delta" id="hw-delta">Δ —</div>
+          </div>
+
+          <div class="hw-status-row">
+            <span class="hw-status" id="hw-status">—</span>
+            <span class="hw-shots" id="hw-shots">—</span>
+          </div>
+
+          <div style="font-size:9px;color:var(--text-dim);letter-spacing:0.3px;margin-top:2px;">
+            Verify: <span id="hw-verify-id" style="color:var(--purple);word-break:break-all;"></span>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+  </div><!-- end #main -->
+
+  <!-- ══════════════ TERMINAL ══════════════ -->
+  <div id="terminal">
+    <!-- Drag handle — mouse down here and drag upward to expand the log -->
+    <div id="terminal-drag-handle" title="Drag up to expand log"></div>
+    <div id="terminal-header">
+      <span id="terminal-title">[ SYSTEM LOG — QUANTUM CHANNEL MONITOR ]</span>
+      <span style="font-size:9px;color:var(--text-dim);letter-spacing:1px;">
+        ibm_hanoi · qubits 10–14 · <span id="shot-counter">0</span> shots processed
+      </span>
+    </div>
+    <div id="terminal-log"></div>
+  </div>
+
+</div><!-- end #app -->
+
+<script>
+/* ════════════════════════════════════════════════════════════════
+   STATE
+   ════════════════════════════════════════════════════════════════ */
+const STATE = {
+  attacking:   false,
+  intensity:   0,        // 0–100
+  defenses:    [false, false, false],
+  speed:       1,
+  tick:        0,
+  totalShots:  0,
+  // computed
+  xt:          0,        // effective crosstalk strength 0–1
+  pCorrect:    0.70,
+  tvd:         0,
+  blochNorms:  [1, 1, 1],
+  histCounts:  new Array(8).fill(0),
+  // real-hardware freeze: {probs, xt, e} when a HW case is selected, null otherwise
+  hwFreeze:    null,
+};
+
+/* Ideal Grover probabilities for 3-qubit (target |110⟩ = index 6) */
+const IDEAL_PROBS = [0.015, 0.015, 0.015, 0.015, 0.015, 0.015, 0.880, 0.015];
+const STATES_8    = ['000','001','010','011','100','101','110','111'];
+const TARGET_IDX  = 6;  // '110'
+
+/* Physics model */
+function computeXT() {
+  if (!STATE.attacking) return 0;
+  let xt = STATE.intensity / 100;
+  // Realistic caps: each defence reduces but cannot eliminate crosstalk
+  // Values grounded in Harper et al. fidelity table (r=2 → ~0.70, RL → 0.86, spectator post-sel ~0.80)
+  if (STATE.defenses[0]) xt = Math.max(xt * 0.52, xt - 0.32);  // D1: circuit separation r=2
+  if (STATE.defenses[1]) xt = Math.max(xt * 0.40, xt - 0.28);  // D2: RL qubit allocation
+  if (STATE.defenses[2]) xt = Math.max(xt * 0.55, xt - 0.22);  // D3: spectator post-selection
+  return Math.min(xt, 0.99);
+}
+
+function computeProbs(xt) {
+  // p_target decreases toward 1/8 as xt → 1
+  const pTarget = IDEAL_PROBS[TARGET_IDX] * (1 - xt) + (1/8) * xt;
+  // All others rise proportionally
+  const remaining = 1 - pTarget;
+  const nonTarget  = 1 - IDEAL_PROBS[TARGET_IDX];
+  const scale      = remaining / nonTarget;
+  return IDEAL_PROBS.map((p, i) =>
+    i === TARGET_IDX ? pTarget : p * scale + (1/8) * xt * (1 - IDEAL_PROBS[i] / nonTarget)
+  );
+}
+
+function computeTVD(probs) {
+  return probs.reduce((s, p, i) => s + Math.abs(p - IDEAL_PROBS[i]), 0) / 2;
+}
+
+function sampleCounts(probs, shots=8192) {
+  // Multinomial sample
+  let counts = new Array(8).fill(0);
+  let rem = shots;
+  const cdf = [];
+  let acc = 0;
+  for (let p of probs) { acc += p; cdf.push(acc); }
+  for (let i = 0; i < shots; i++) {
+    const r = Math.random();
+    for (let j = 0; j < 8; j++) {
+      if (r < cdf[j]) { counts[j]++; break; }
+    }
+  }
+  return counts;
+}
+
+/* ════════════════════════════════════════════════════════════════
+   THREE.JS — 3D TOPOLOGY
+   ════════════════════════════════════════════════════════════════ */
+let threeScene, threeCamera, threeRenderer;
+let qubitMeshes = [], edgeMeshes = [], attackParticles = [];
+let rotAngle = 0;
+let rotationPaused = false;
+
+// ibm_hanoi 5-qubit segment positions (3D aesthetic layout)
+const QUBIT_POS = [
+  new THREE.Vector3(-3.2,  0.3, -0.4),  // q0 — victim
+  new THREE.Vector3(-1.6,  0.8,  0.6),  // q1 — victim
+  new THREE.Vector3( 0.0,  0.0,  0.0),  // q2 — victim BOUNDARY
+  new THREE.Vector3( 1.6, -0.6,  0.5),  // q3 — attack BOUNDARY
+  new THREE.Vector3( 3.2,  0.2, -0.3),  // q4 — attacker
+];
+
+const EDGES = [[0,1],[1,2],[2,3],[3,4]];
+
+function initThree() {
+  const wrapper = document.getElementById('topology-canvas-wrapper');
+  const canvas  = document.getElementById('topology-canvas');
+
+  threeRenderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+  threeRenderer.setClearColor(0x000000, 0);
+  threeRenderer.setPixelRatio(window.devicePixelRatio);  // full native DPR, no cap
+
+  threeScene = new THREE.Scene();
+
+  const fov = 55;
+  threeCamera = new THREE.PerspectiveCamera(fov, 1, 0.1, 100);
+  threeCamera.position.set(0, 1.5, 9);
+  threeCamera.lookAt(0, 0, 0);
+
+  // Ambient + directional lights
+  threeScene.add(new THREE.AmbientLight(0x111122, 1.5));
+  const dLight = new THREE.DirectionalLight(0x8899ff, 2);
+  dLight.position.set(4, 6, 4);
+  threeScene.add(dLight);
+
+  // Grid floor (subtle)
+  const gridHelper = new THREE.GridHelper(20, 20, 0x0a0a20, 0x0a0a20);
+  gridHelper.position.y = -2.5;
+  threeScene.add(gridHelper);
+
+  // Qubit spheres
+  const colors = [0x3b82f6, 0x3b82f6, 0xf59e0b, 0xef4444, 0xef4444];
+  const sizes  = [0.32, 0.32, 0.42, 0.42, 0.30];
+
+  qubitMeshes = QUBIT_POS.map((pos, i) => {
+    const geo = new THREE.SphereGeometry(sizes[i], 32, 32);
+    const mat = new THREE.MeshPhongMaterial({
+      color: colors[i], emissive: colors[i],
+      emissiveIntensity: 0.5, shininess: 100,
+      transparent: true, opacity: 0.9,
+    });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.copy(pos);
+    threeScene.add(mesh);
+
+    // Outer glow ring
+    const ringGeo = new THREE.TorusGeometry(sizes[i] * 1.6, 0.03, 8, 32);
+    const ringMat = new THREE.MeshBasicMaterial({
+      color: colors[i], transparent: true, opacity: 0.4
+    });
+    const ring = new THREE.Mesh(ringGeo, ringMat);
+    ring.rotation.x = Math.PI / 3;
+    mesh.add(ring);
+
+    return mesh;
+  });
+
+  // Edge tubes
+  edgeMeshes = EDGES.map(([a, b]) => {
+    const isAttackBoundary = (a===2 && b===3) || (a===3 && b===2);
+    const start = QUBIT_POS[a].clone();
+    const end   = QUBIT_POS[b].clone();
+    const dir   = end.clone().sub(start);
+    const len   = dir.length();
+    const mid   = start.clone().add(end).multiplyScalar(0.5);
+
+    const geo = new THREE.CylinderGeometry(0.04, 0.04, len, 8, 1);
+    const mat = new THREE.MeshBasicMaterial({
+      color: isAttackBoundary ? 0xf97316 : 0x1e3a5f,
+      transparent: true, opacity: isAttackBoundary ? 0.9 : 0.5,
+    });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.copy(mid);
+    mesh.quaternion.setFromUnitVectors(
+      new THREE.Vector3(0, 1, 0),
+      dir.normalize()
+    );
+    threeScene.add(mesh);
+    return { mesh, mat, isAttackBoundary };
+  });
+
+  // Attack particle system (pool)
+  const particleCount = 60;
+  const pGeo  = new THREE.BufferGeometry();
+  const pPositions = new Float32Array(particleCount * 3);
+  pGeo.setAttribute('position', new THREE.BufferAttribute(pPositions, 3));
+  const pMat = new THREE.PointsMaterial({
+    color: 0xff3333, size: 0.12, transparent: true,
+    opacity: 0.9, blending: THREE.AdditiveBlending,
+  });
+  const particleSystem = new THREE.Points(pGeo, pMat);
+  threeScene.add(particleSystem);
+
+  attackParticles = { system: particleSystem, positions: pPositions, active: [] };
+  for (let i = 0; i < particleCount; i++) {
+    attackParticles.active.push({ t: -1, edge: 0, speed: 1 });
+  }
+
+  // ── CNOT gate rings (attack visualization) ─────────────────────
+  // Represent CX(3,4) and CX(4,3) as pulsing torus rings
+  const cnotRings = [];
+  [[3,4],[4,3]].forEach(([ctrl, tgt]) => {
+    // Control qubit ring
+    const ringCtrl = new THREE.Mesh(
+      new THREE.TorusGeometry(0.52, 0.05, 8, 32),
+      new THREE.MeshBasicMaterial({ color: 0xff3333, transparent: true, opacity: 0, wireframe: false })
+    );
+    ringCtrl.position.copy(QUBIT_POS[ctrl]);
+    threeScene.add(ringCtrl);
+
+    // Target ⊕ symbol (circle)
+    const ringTgt = new THREE.Mesh(
+      new THREE.TorusGeometry(0.38, 0.04, 8, 32),
+      new THREE.MeshBasicMaterial({ color: 0xff6666, transparent: true, opacity: 0 })
+    );
+    ringTgt.position.copy(QUBIT_POS[tgt]);
+    threeScene.add(ringTgt);
+
+    // Vertical line through target (⊕ cross)
+    const crossGeo = new THREE.CylinderGeometry(0.02, 0.02, 0.75, 6);
+    const crossMat = new THREE.MeshBasicMaterial({ color: 0xff6666, transparent: true, opacity: 0 });
+    const crossV   = new THREE.Mesh(crossGeo, crossMat);
+    crossV.position.copy(QUBIT_POS[tgt]);
+    threeScene.add(crossV);
+    const crossH = new THREE.Mesh(crossGeo, crossMat.clone());
+    crossH.rotation.z = Math.PI / 2;
+    crossH.position.copy(QUBIT_POS[tgt]);
+    threeScene.add(crossH);
+
+    cnotRings.push({ ringCtrl, ringTgt, crossV, crossH });
+  });
+
+  // Crosstalk leakage arc: q[3] → q[2] (dashed arrow showing noise leaking to victim)
+  const leakPoints = [];
+  for (let t = 0; t <= 1; t += 0.04) {
+    const p = QUBIT_POS[3].clone().lerp(QUBIT_POS[2], t);
+    p.y += Math.sin(t * Math.PI) * 0.5;   // arc upward
+    leakPoints.push(p);
+  }
+  const leakGeo = new THREE.BufferGeometry().setFromPoints(leakPoints);
+  const leakMat = new THREE.LineBasicMaterial({
+    color: 0xf97316, transparent: true, opacity: 0, linewidth: 2
+  });
+  const leakLine = new THREE.Line(leakGeo, leakMat);
+  threeScene.add(leakLine);
+
+  // "CNOT" text sprite label on q[3]—q[4] edge
+  const spriteMat = new THREE.SpriteMaterial({
+    color: 0xff4444, transparent: true, opacity: 0
+  });
+  const sprite = new THREE.Sprite(spriteMat);
+  sprite.position.set(
+    (QUBIT_POS[3].x + QUBIT_POS[4].x) / 2,
+    (QUBIT_POS[3].y + QUBIT_POS[4].y) / 2 + 0.7,
+    (QUBIT_POS[3].z + QUBIT_POS[4].z) / 2
+  );
+  sprite.scale.set(0.8, 0.4, 1);
+  threeScene.add(sprite);
+
+  window._cnotRings = cnotRings;
+  window._leakLine  = leakLine;
+  window._cnotPhase = 0;
+}
+
+function resizeThree() {
+  const wrapper = document.getElementById('topology-canvas-wrapper');
+  const w = wrapper.clientWidth;
+  const h = wrapper.clientHeight;
+  if (w === 0 || h === 0) return;           // guard against zero-size layout flash
+  threeRenderer.setSize(w, h, true);        // true = set canvas.style.width/height
+  threeCamera.aspect = w / h;
+  threeCamera.updateProjectionMatrix();
+}
+
+function spawnParticle(edgeIdx) {
+  for (let p of attackParticles.active) {
+    if (p.t < 0 || p.t >= 1) {
+      p.t = 0;
+      p.edge = edgeIdx;
+      p.speed = 0.008 + Math.random() * 0.012;
+      return;
+    }
+  }
+}
+
+function updateThree(xt) {
+  if (!rotationPaused) rotAngle += 0.002 * STATE.speed;
+
+  // Rotate scene
+  threeScene.rotation.y = rotAngle * 0.3 + Math.sin(rotAngle * 0.15) * 0.3;
+
+  // Qubit pulse intensity
+  const t = Date.now() * 0.001;
+  qubitMeshes.forEach((mesh, i) => {
+    const isVictim  = i <= 2;
+    const isAttack  = i >= 3;
+    let pulse = 1 + Math.sin(t * 2 + i) * 0.08;
+    let emissiveInt = 0.4 + Math.sin(t * 1.5 + i) * 0.15;
+
+    if (STATE.attacking && xt > 0) {
+      if (i === 2) { // boundary victim: shake + redden
+        mesh.position.x = QUBIT_POS[2].x + Math.sin(t * 30) * xt * 0.07;
+        mesh.position.y = QUBIT_POS[2].y + Math.cos(t * 25) * xt * 0.06;
+        const r = 0.96, g = 0.62 * (1-xt), b = 0.11 * (1-xt);
+        mesh.material.color.setRGB(r, g, b);
+        mesh.material.emissive.setRGB(r * 0.6, 0, 0);
+        emissiveInt = 0.6 + xt * 0.8;
+        pulse = 1 + xt * 0.3;
+      } else if (i === 1 && xt > 0.5) { // q1: second-order effect
+        mesh.material.color.setRGB(0.7 + (xt-0.5)*0.3, 0.55, 0.1);
+      }
+      if (isAttack) { // attacker qubits: bright red
+        emissiveInt = 0.7 + Math.sin(t * 5 + i) * 0.3;
+        mesh.material.color.setHex(0xff2222);
+        mesh.material.emissive.setHex(0xff0000);
+      }
+    } else {
+      // Reset colors
+      if (i < 3) { mesh.material.color.setHex(0x3b82f6); mesh.material.emissive.setHex(0x3b82f6); }
+      else { mesh.material.color.setHex(0xef4444); mesh.material.emissive.setHex(0xef4444); }
+      mesh.position.copy(QUBIT_POS[i]);
+    }
+    mesh.material.emissiveIntensity = emissiveInt;
+    mesh.scale.setScalar(pulse);
+  });
+
+  // Edge glow
+  edgeMeshes.forEach(({ mesh, mat, isAttackBoundary }, i) => {
+    if (isAttackBoundary) {
+      const glow = 0.5 + xt * 0.8 + Math.sin(t * 8) * 0.3 * xt;
+      mat.opacity = Math.min(1, glow);
+      mat.color.setRGB(1, 0.4 * (1 - xt) + 0.1, 0.0);
+    }
+  });
+
+  // ── CNOT gate animation (attack visualization) ────────────────
+  if (window._cnotRings) {
+    window._cnotPhase = (window._cnotPhase || 0) + 0.06 * STATE.speed;
+    const cnotPh = window._cnotPhase;
+    const cnotVis = STATE.attacking ? Math.min(xt * 2.5, 1.0) : 0;
+
+    // Alternate CX(3,4) and CX(4,3) like actual repeated CNOT execution
+    const activeRing = Math.floor(cnotPh / Math.PI) % 2;
+
+    window._cnotRings.forEach((r, i) => {
+      const isActive = (i === activeRing);
+      const pulse    = Math.abs(Math.sin(cnotPh + i * Math.PI));
+
+      // Control ring: solid pulsing circle around control qubit
+      r.ringCtrl.material.opacity = cnotVis * (isActive ? pulse : pulse * 0.25);
+      r.ringCtrl.rotation.x = t * 2 + i;
+      r.ringCtrl.rotation.y = t * 1.3;
+      r.ringCtrl.scale.setScalar(1 + pulse * 0.15 * cnotVis);
+
+      // Target ⊕ ring + cross
+      r.ringTgt.material.opacity  = cnotVis * (isActive ? pulse : pulse * 0.2);
+      r.crossV.material.opacity   = cnotVis * (isActive ? pulse : pulse * 0.2);
+      r.crossH.material.opacity   = cnotVis * (isActive ? pulse : pulse * 0.2);
+      r.ringTgt.rotation.x = t * 2.5 + i * 0.7;
+
+      // Scale bounce on active CNOT
+      if (isActive && cnotVis > 0.1) {
+        const tgtMesh = qubitMeshes[i === 0 ? 4 : 3];
+        tgtMesh.scale.setScalar(1 + pulse * 0.25 * cnotVis);
+      }
+    });
+
+    // Leakage arc: pulses from q[3] toward q[2], brighter at higher xt
+    const leakPulse = Math.abs(Math.sin(cnotPh * 0.7)) * xt;
+    window._leakLine.material.opacity = STATE.attacking
+      ? Math.max(0.35, leakPulse * 0.85)
+      : 0;
+    // Shift arc color: yellow → orange → red as xt increases
+    const r2 = 1, g2 = Math.max(0, 0.6 - xt * 0.6), b2 = 0;
+    window._leakLine.material.color.setRGB(r2, g2, b2);
+
+    // Update CNOT counter in overlay
+    const cnotEl = document.getElementById('cnot-counter');
+    if (cnotEl) {
+      const cnotCount = STATE.attacking ? Math.round(STATE.intensity * 0.6) : 0;
+      cnotEl.textContent  = cnotCount;
+      cnotEl.style.color  = cnotCount === 0 ? '#333' :
+                            cnotCount < 20  ? 'var(--amber)' :
+                            cnotCount < 50  ? 'var(--orange)' : 'var(--red)';
+      if (cnotCount > 0) cnotEl.style.textShadow = `0 0 10px ${cnotCount > 40 ? 'var(--red)' : 'var(--amber)'}`;
+      else cnotEl.style.textShadow = 'none';
+    }
+  }
+
+  // Attack particles
+  if (STATE.attacking && xt > 0.1) {
+    if (Math.random() < xt * 0.6) spawnParticle(2); // boundary edge
+    if (Math.random() < xt * 0.3) spawnParticle(1); // bleed to q1-q2
+    if (Math.random() < 0.4)      spawnParticle(3); // attacker edge
+  }
+
+  // Update particles
+  const pos = attackParticles.positions;
+  attackParticles.active.forEach((p, i) => {
+    if (p.t < 0 || p.t > 1) {
+      pos[i*3] = 1000; pos[i*3+1] = 1000; pos[i*3+2] = 1000;
+      return;
+    }
+    p.t += p.speed * STATE.speed;
+    const [a, b] = EDGES[Math.min(p.edge, EDGES.length-1)];
+    const start = QUBIT_POS[a], end = QUBIT_POS[b];
+    const interp = (v1, v2, t) => v1 + (v2 - v1) * t;
+    pos[i*3]   = interp(start.x, end.x, p.t) + (Math.random()-0.5)*0.1;
+    pos[i*3+1] = interp(start.y, end.y, p.t) + (Math.random()-0.5)*0.1;
+    pos[i*3+2] = interp(start.z, end.z, p.t) + (Math.random()-0.5)*0.1;
+    if (p.t >= 1) p.t = -1;
+  });
+  attackParticles.system.geometry.attributes.position.needsUpdate = true;
+
+  threeRenderer.render(threeScene, threeCamera);
+}
+
+/* ════════════════════════════════════════════════════════════════
+   D3 HISTOGRAM
+   ════════════════════════════════════════════════════════════════ */
+let histSVG, histBars, histBarsDefense, histXScale, histYScale, histX, histY;
+
+function initHistogram() {
+  const container = document.getElementById('histogram-svg-container');
+  const W = container.clientWidth  || 400;
+  const H = container.clientHeight || 220;
+  const margin = { top: 12, right: 20, bottom: 42, left: 44 };
+  const innerW  = W - margin.left - margin.right;
+  const innerH  = H - margin.top  - margin.bottom;
+
+  histSVG = d3.select('#histogram-svg-container')
+    .append('svg')
+    .attr('width',  '100%')
+    .attr('height', '100%')
+    .attr('viewBox', `0 0 ${W} ${H}`)
+    .attr('preserveAspectRatio', 'xMidYMid meet')
+    .style('background', 'transparent');
+
+  const g = histSVG.append('g')
+    .attr('transform', `translate(${margin.left},${margin.top})`);
+
+  histXScale = d3.scaleBand()
+    .domain(STATES_8)
+    .range([0, innerW])
+    .padding(0.25);
+
+  histYScale = d3.scaleLinear()
+    .domain([0, 100])
+    .range([innerH, 0]);
+
+  // X axis
+  const xAxis = g.append('g')
+    .attr('transform', `translate(0,${innerH})`)
+    .call(d3.axisBottom(histXScale).tickSize(0));
+  xAxis.select('.domain').attr('stroke', '#1e1e3a');
+  xAxis.selectAll('text')
+    .attr('fill', '#666688')
+    .attr('font-family', 'IBM Plex Mono')
+    .attr('font-size', '10px')
+    .attr('dy', '1.2em');
+
+  // X label
+  g.append('text')
+    .attr('x', innerW / 2).attr('y', innerH + 38)
+    .attr('text-anchor', 'middle')
+    .attr('fill', '#444466')
+    .attr('font-family', 'IBM Plex Mono')
+    .attr('font-size', '10px')
+    .attr('letter-spacing', '2')
+    .text('BASIS STATE  |q₂q₁q₀⟩');
+
+  // Y axis
+  const yAxis = g.append('g')
+    .call(d3.axisLeft(histYScale).ticks(5).tickFormat(d => d+'%'));
+  yAxis.select('.domain').attr('stroke', '#1e1e3a');
+  yAxis.selectAll('text')
+    .attr('fill', '#666688')
+    .attr('font-family', 'IBM Plex Mono')
+    .attr('font-size', '9px');
+  yAxis.selectAll('line').attr('stroke', '#1e1e3a');
+
+  // Horizontal grid lines
+  g.append('g').attr('class', 'grid-lines')
+    .selectAll('line')
+    .data(histYScale.ticks(5))
+    .join('line')
+    .attr('x1', 0).attr('x2', innerW)
+    .attr('y1', d => histYScale(d)).attr('y2', d => histYScale(d))
+    .attr('stroke', '#1a1a30').attr('stroke-dasharray', '3,3');
+
+  // Random chance line
+  g.append('line')
+    .attr('x1', 0).attr('x2', innerW)
+    .attr('y1', histYScale(12.5)).attr('y2', histYScale(12.5))
+    .attr('stroke', '#2255aa').attr('stroke-dasharray', '4,3')
+    .attr('stroke-width', 1.5);
+  g.append('text')
+    .attr('x', innerW - 4).attr('y', histYScale(12.5) - 3)
+    .attr('text-anchor', 'end').attr('fill', '#2255aa')
+    .attr('font-family', 'IBM Plex Mono').attr('font-size', '8px')
+    .text('random 12.5%');
+
+  // Baseline bars (ideal, shown as faint outlines)
+  g.selectAll('.bar-baseline')
+    .data(STATES_8)
+    .join('rect')
+    .attr('class', 'bar-baseline')
+    .attr('x', d => histXScale(d))
+    .attr('width', histXScale.bandwidth())
+    .attr('y', (d, i) => histYScale(IDEAL_PROBS[i] * 100))
+    .attr('height', (d, i) => innerH - histYScale(IDEAL_PROBS[i] * 100))
+    .attr('fill', 'none')
+    .attr('stroke', '#3b82f6')
+    .attr('stroke-width', 1)
+    .attr('opacity', 0.4);
+
+  // Live bars (attack result)
+  histBars = g.selectAll('.bar-live')
+    .data(STATES_8)
+    .join('rect')
+    .attr('class', 'bar-live')
+    .attr('x', d => histXScale(d))
+    .attr('width', histXScale.bandwidth())
+    .attr('y', (d, i) => histYScale(IDEAL_PROBS[i] * 100))
+    .attr('height', (d, i) => innerH - histYScale(IDEAL_PROBS[i] * 100))
+    .attr('fill', (d, i) => i === TARGET_IDX ? '#00ff88' : '#1f3a6e')
+    .attr('rx', 1).attr('ry', 1)
+    .attr('opacity', 0.85);
+
+  // Defense overlay bars (dotted outline)
+  histBarsDefense = g.selectAll('.bar-defense')
+    .data(STATES_8)
+    .join('rect')
+    .attr('class', 'bar-defense')
+    .attr('x', d => histXScale(d) + 1)
+    .attr('width', histXScale.bandwidth() - 2)
+    .attr('y', innerH)
+    .attr('height', 0)
+    .attr('fill', 'none')
+    .attr('stroke', '#00ff88')
+    .attr('stroke-width', 1.5)
+    .attr('stroke-dasharray', '3,2')
+    .attr('opacity', 0);
+
+  // Target label
+  g.append('text').attr('class', 'target-label')
+    .attr('x', histXScale('110') + histXScale.bandwidth() / 2)
+    .attr('y', histYScale(90))
+    .attr('text-anchor', 'middle')
+    .attr('fill', '#00ff88').attr('font-family', 'IBM Plex Mono')
+    .attr('font-size', '9px').attr('letter-spacing', '1')
+    .text('TARGET');
+
+  histX = histXScale; histY = histYScale;
+  window._histInnerH = innerH;
+  window._histG = g;
+}
+
+function updateHistogram(probs, defenseProbs) {
+  const innerH = window._histInnerH;
+  if (!innerH) return;
+
+  const transition = d3.transition().duration(250).ease(d3.easeCubicOut);
+
+  histBars.data(STATES_8)
+    .transition(transition)
+    .attr('y',      (d, i) => histYScale(probs[i] * 100))
+    .attr('height', (d, i) => Math.max(0, innerH - histYScale(probs[i] * 100)))
+    .attr('fill',   (d, i) => {
+      if (i !== TARGET_IDX) return '#1f3a6e';
+      const p = probs[i];
+      if (p > 0.55) return '#00ff88';
+      if (p > 0.30) return '#f59e0b';
+      if (p > 0.15) return '#f97316';
+      return '#ef4444';
+    })
+    .attr('opacity', (d, i) => i === TARGET_IDX ? 1.0 : 0.7);
+
+  if (defenseProbs) {
+    histBarsDefense.data(STATES_8)
+      .transition(transition)
+      .attr('y',      (d, i) => histYScale(defenseProbs[i] * 100))
+      .attr('height', (d, i) => Math.max(0, innerH - histYScale(defenseProbs[i] * 100)))
+      .attr('opacity', 0.8);
+  } else {
+    histBarsDefense.transition(transition).attr('opacity', 0);
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════
+   BLOCH SPHERE — Canvas 2D
+   ════════════════════════════════════════════════════════════════ */
+function drawBloch(canvasId, bvNormAttacked, bvNormDefended, qubitIdx) {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+  const cx = W/2, cy = H/2, r = W/2 - 6;
+  ctx.clearRect(0, 0, W, H);
+
+  // Background
+  ctx.fillStyle = '#0d0d1a';
+  ctx.fillRect(0, 0, W, H);
+
+  // Sphere outline
+  ctx.strokeStyle = '#1e1e3a';
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI*2); ctx.stroke();
+
+  // Equator dashed
+  ctx.strokeStyle = '#1a1a30';
+  ctx.setLineDash([2, 3]);
+  ctx.beginPath(); ctx.ellipse(cx, cy, r, r*0.3, 0, 0, Math.PI*2); ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Axes
+  ctx.strokeStyle = '#1e1e3a'; ctx.lineWidth = 0.5;
+  ctx.beginPath(); ctx.moveTo(cx, cy-r); ctx.lineTo(cx, cy+r); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(cx-r, cy); ctx.lineTo(cx+r, cy); ctx.stroke();
+
+  // Axis labels — sized for 140×140 canvas
+  ctx.font = '10px IBM Plex Mono';
+  ctx.textAlign = 'center';
+  // |0⟩ pole (north — pure |0⟩ state)
+  ctx.fillStyle = '#4466aa';
+  ctx.fillText('|0⟩', cx, cy - r - 5);
+  // |1⟩ pole (south)
+  ctx.fillStyle = '#aa4444';
+  ctx.fillText('|1⟩', cx, cy + r + 13);
+  // |+⟩ equator (right side — superposition)
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#336633';
+  ctx.fillText('|+⟩', cx + r + 3, cy + 4);
+  ctx.textAlign = 'center';
+
+  const phases = [0.8, 0.4, 0.2];
+  const baseAngle = phases[qubitIdx] * Math.PI;
+
+  // ── Helper: draw one Bloch vector ─────────────────────────────
+  function drawVector(norm, extraDrift, color, dashed=false) {
+    const len    = norm * r;
+    const drift  = extraDrift;
+    const angle  = baseAngle + drift + Math.sin(STATE.tick * 0.05 + qubitIdx + (dashed?1:0)) * STATE.xt * 0.3;
+    const bvX    = Math.sin(angle) * len;
+    const bvY    = -Math.cos(angle) * len;
+
+    ctx.shadowColor = color;
+    ctx.shadowBlur  = norm > 0.5 ? 8 : 2;
+    ctx.strokeStyle = color;
+    ctx.lineWidth   = dashed ? 1.5 : 2.5;
+    if (dashed) ctx.setLineDash([3,2]);
+    else ctx.setLineDash([]);
+    ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + bvX, cy + bvY); ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Arrow head
+    if (norm > 0.08) {
+      ctx.fillStyle  = color;
+      ctx.shadowBlur = 0;
+      const a2 = Math.atan2(bvY, bvX);
+      ctx.beginPath();
+      ctx.moveTo(cx + bvX, cy + bvY);
+      ctx.lineTo(cx + bvX - 5*Math.cos(a2-0.4), cy + bvY - 5*Math.sin(a2-0.4));
+      ctx.lineTo(cx + bvX - 5*Math.cos(a2+0.4), cy + bvY - 5*Math.sin(a2+0.4));
+      ctx.closePath(); ctx.fill();
+    }
+
+    // Coherence ring
+    ctx.strokeStyle = color;
+    ctx.lineWidth   = 0.7;
+    ctx.globalAlpha = 0.2;
+    ctx.shadowBlur  = 0;
+    ctx.beginPath(); ctx.arc(cx, cy, len, 0, Math.PI*2); ctx.stroke();
+    ctx.globalAlpha = 1.0;
+  }
+
+  // ── Draw ATTACKED vector (always shown when xt>0) ─────────────
+  const xtRaw   = STATE.attacking ? STATE.intensity / 100 : 0;  // undefended xt
+  const driftA  = xtRaw * 0.5 * (qubitIdx === 2 ? 1.5 : 0.5);
+  const colorA  = bvNormAttacked > 0.7 ? '#00ff88' :
+                  bvNormAttacked > 0.4 ? '#f59e0b' : '#ef4444';
+  drawVector(bvNormAttacked, driftA, colorA, false);
+
+  // ── Draw DEFENDED vector (dashed green, only if any defense on) ─
+  const anyDef = STATE.defenses.some(d=>d);
+  if (anyDef && STATE.attacking && bvNormDefended > bvNormAttacked + 0.05) {
+    const driftD = STATE.xt * 0.5 * (qubitIdx === 2 ? 1.5 : 0.5) * 0.3;
+    drawVector(bvNormDefended, driftD, '#00ff88', true);
+    // Draw delta label
+    const delta = bvNormDefended - bvNormAttacked;
+    ctx.fillStyle  = '#00ff88';
+    ctx.font       = '7px IBM Plex Mono';
+    ctx.textAlign  = 'right';
+    ctx.shadowBlur = 0;
+    ctx.fillText(`+${(delta*100).toFixed(0)}%`, W-2, H-2);
+  }
+
+  // Center dot
+  ctx.shadowBlur = 0;
+  ctx.fillStyle  = '#334';
+  ctx.beginPath(); ctx.arc(cx, cy, 2, 0, Math.PI*2); ctx.fill();
+}
+
+function updateBlochSpheres(xt) {
+  // Attacked norm: uses raw (undefended) xt
+  const xtRaw = STATE.attacking ? STATE.intensity / 100 : 0;
+  const decayAttacked = [
+    Math.max(0.05, 1 - xtRaw * 0.50),
+    Math.max(0.05, 1 - xtRaw * 0.70),
+    Math.max(0.05, 1 - xtRaw * 0.95),
+  ];
+  // Defended norm: uses effective xt (after defense reductions)
+  const decayDefended = [
+    Math.max(0.05, 1 - xt * 0.50),
+    Math.max(0.05, 1 - xt * 0.70),
+    Math.max(0.05, 1 - xt * 0.95),
+  ];
+
+  STATE.blochNorms = decayDefended;
+
+  decayDefended.forEach((norm, i) => {
+    drawBloch(`bloch${i}`, decayAttacked[i], decayDefended[i], i);
+    const el = document.getElementById(`bloch${i}-val`);
+    if (el) {
+      const showNorm = STATE.defenses.some(d=>d) ? decayDefended[i] : decayAttacked[i];
+      el.textContent = `|BV|=${showNorm.toFixed(2)}`;
+      el.style.color = showNorm > 0.7 ? 'var(--green)' : showNorm > 0.4 ? 'var(--amber)' : 'var(--red)';
+    }
+  });
+
+  // Update recovery meters for q[2] (most vulnerable)
+  const attackedPct = decayAttacked[2] * 100;
+  const defendedPct = decayDefended[2] * 100;
+  const recA = document.getElementById('rec-attacked');
+  const recD = document.getElementById('rec-defended');
+  const recAv = document.getElementById('rec-attacked-val');
+  const recDv = document.getElementById('rec-defended-val');
+  if (recA) {
+    recA.style.width = `${attackedPct}%`;
+    recA.style.background = attackedPct > 70 ? 'var(--green)' : attackedPct > 40 ? 'var(--amber)' : 'var(--red)';
+    recAv.textContent = `${attackedPct.toFixed(0)}%`;
+    recAv.style.color = recA.style.background.includes('red') ? 'var(--red)' : 'var(--amber)';
+  }
+  if (recD) {
+    const anyDef = STATE.defenses.some(d=>d);
+    recD.style.width   = anyDef ? `${defendedPct}%` : '0%';
+    recDv.textContent  = anyDef ? `${defendedPct.toFixed(0)}%` : '--';
+    recDv.style.color  = defendedPct > 70 ? 'var(--green)' : 'var(--amber)';
+  }
+
+  // Update bitstring status overlay
+  const pC = STATE.pCorrect * 100;
+  const bsStatus = document.getElementById('bitstring-status');
+  const cnOk = document.getElementById('cnot-counter');
+  if (bsStatus) {
+    if (!STATE.attacking || xt < 0.05) {
+      bsStatus.textContent = '✓ CORRECT RESULT';
+      bsStatus.style.color = 'var(--green)';
+    } else if (pC > 55) {
+      bsStatus.textContent = '⚠ DEGRADING';
+      bsStatus.style.color = 'var(--amber)';
+    } else if (pC > 25) {
+      bsStatus.textContent = '☠ HEAVILY CORRUPTED';
+      bsStatus.style.color = 'var(--orange)';
+    } else {
+      bsStatus.textContent = '☠☠ RESULT DESTROYED';
+      bsStatus.style.color = 'var(--red)';
+    }
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════
+   TERMINAL LOG
+   ════════════════════════════════════════════════════════════════ */
+const logMessages = {
+  nominal: [
+    ['SCHEDULER','Circuit accepted — ibm_hanoi qubit map loaded'],
+    ['TRANSPILER','Grover(n=3) compiled → 47 gates, depth 28'],
+    ['CALIBRATION','T₁/T₂ within spec — last calibration: 0h 12m ago'],
+    ['SAMPLER','Job queued — estimated runtime 3.2s'],
+  ],
+  light: [
+    ['TELEMETRY','⚠ Qubit 3 Z-error rate elevated: 0.04 (nominal: 0.009)'],
+    ['SCHEDULER','Adjacent circuit detected on qubits [3,4] — 20 CX pairs'],
+    ['CROSSTALK','Idle tomography flag: HSA drift on q[2] (+0.8σ)'],
+    ['SAMPLER','Shot batch 1024/8192 — P(|110⟩)=62.3% (↓ 7.7pp)'],
+  ],
+  moderate: [
+    ['CROSSTALK','☠ Crosstalk detected: CX(12,13) error ×3.1 baseline'],
+    ['TELEMETRY','⚠ T₂ decoherence q[2]: effective 18.1µs (nominal: 305.9µs)'],
+    ['SAMPLER','Shot batch 2048/8192 — P(|110⟩)=34.7% (↓ 35pp)'],
+    ['ALERT','Output distribution divergence — TVD=0.31 (threshold: 0.10)'],
+  ],
+  heavy: [
+    ['ATTACK','☠☠ FULL CROSSTALK INJECTION DETECTED'],
+    ['TELEMETRY','CRITICAL: qubit 2 Bloch vector |BV|=0.11 (decoherence)'],
+    ['OUTPUT','HISTOGRAM COLLAPSE: |110⟩ peak → uniform distribution'],
+    ['ATTACK','Adversary circuit: CNOT(3,4)×60 — budget cloud account'],
+    ['INTEGRITY','Grover result DESTROYED — output indistinguishable from noise'],
+  ],
+  defense: {
+    1: ['DEFENSE','[D1] Circuit separation r=2 engaged — buffering 2 idle qubits'],
+    2: ['DEFENSE','[D2] RL qubit allocator: remapped to low-noise path q[6,5,4]'],
+    3: ['DEFENSE','[D3] Spectator qubit q[3] armed — mid-circuit measurement active'],
+  },
+};
+
+let logTimer = null;
+let logTick  = 0;
+let lastLogXT = -1;
+
+function addLog(src, msg, cls='log-ok') {
+  const log  = document.getElementById('terminal-log');
+  const ts   = new Date().toTimeString().split(' ')[0];
+  const line = document.createElement('div');
+  line.className = 'log-line';
+  line.innerHTML = `<span class="log-ts">${ts}</span><span class="log-src ${cls}">[${src}]</span><span class="log-msg ${cls}">${msg}</span>`;
+  log.appendChild(line);
+  // Keep max 50 lines
+  while (log.children.length > 50) log.removeChild(log.firstChild);
+  log.scrollTop = log.scrollHeight;
+}
+
+function scheduleLog(xt) {
+  let pool, cls;
+  if (!STATE.attacking || xt < 0.05) { pool = logMessages.nominal; cls = 'log-info'; }
+  else if (xt < 0.3)                 { pool = logMessages.light;    cls = 'log-warn'; }
+  else if (xt < 0.6)                 { pool = logMessages.moderate; cls = 'log-warn'; }
+  else                               { pool = logMessages.heavy;    cls = 'log-crit'; }
+
+  const msg = pool[logTick % pool.length];
+  addLog(msg[0], msg[1], cls);
+  logTick++;
+}
+
+/* ════════════════════════════════════════════════════════════════
+   UI UPDATE
+   ════════════════════════════════════════════════════════════════ */
+function updateUI(xt, probs) {
+  const pTarget = probs[TARGET_IDX] * 100;
+  const tvd     = computeTVD(probs);
+
+  // Header meters
+  const pFill  = document.getElementById('p-fill');
+  const pVal   = document.getElementById('p-value');
+  const tvdFill = document.getElementById('tvd-fill');
+  const tvdVal  = document.getElementById('tvd-value');
+
+  pFill.style.width      = `${pTarget}%`;
+  pFill.style.background = pTarget > 55 ? 'var(--green)' : pTarget > 30 ? 'var(--amber)' : 'var(--red)';
+  pVal.textContent       = `${pTarget.toFixed(1)}%`;
+  pVal.style.color       = pTarget > 55 ? 'var(--green)' : pTarget > 30 ? 'var(--amber)' : 'var(--red)';
+
+  tvdFill.style.width = `${tvd * 100}%`;
+  tvdVal.textContent  = tvd.toFixed(3);
+  tvdVal.style.color  = tvd < 0.1 ? 'var(--green)' : tvd < 0.3 ? 'var(--amber)' : 'var(--red)';
+
+  // Status chip
+  const chip = document.getElementById('status-chip');
+  const text = document.getElementById('status-text');
+  if (!STATE.attacking || xt < 0.05) { chip.className='status-chip'; text.textContent='NOMINAL'; }
+  else if (xt < 0.4) { chip.className='status-chip attacking'; text.textContent='DEGRADED'; }
+  else { chip.className='status-chip attacking'; text.textContent='UNDER ATTACK'; }
+
+  // Metrics panel
+  document.getElementById('m-pcorrect').textContent = `${pTarget.toFixed(1)}%`;
+  document.getElementById('m-pcorrect').className = `m-value${pTarget>55?'':pTarget>30?' warn':' crit'}`;
+  document.getElementById('m-tvd').textContent = tvd.toFixed(3);
+  document.getElementById('m-tvd').className   = `m-value${tvd<0.1?'':tvd<0.3?' warn':' crit'}`;
+  document.getElementById('m-xt').textContent  = `${(xt*100).toFixed(0)}%`;
+  document.getElementById('m-xt').className    = `m-value${xt<0.1?'':xt<0.4?' warn':' crit'}`;
+
+  STATE.totalShots += Math.round(1024 * STATE.speed);
+  document.getElementById('m-shots').textContent = (8192 * STATE.speed).toLocaleString();
+  document.getElementById('shot-counter').textContent = STATE.totalShots.toLocaleString();
+
+  // Intensity label
+  document.getElementById('intensity-val').textContent = `${STATE.intensity}%`;
+  document.getElementById('intensity-val').style.color =
+    STATE.intensity < 30 ? 'var(--text)' : STATE.intensity < 70 ? 'var(--amber)' : 'var(--red)';
+
+  // Glitch effect on heavy attack
+  if (xt > 0.7 && Math.random() < 0.05) {
+    document.getElementById('histogram-panel').classList.add('glitch');
+    setTimeout(() => document.getElementById('histogram-panel').classList.remove('glitch'), 200);
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════
+   CONTROLS
+   ════════════════════════════════════════════════════════════════ */
+function toggleAttack() {
+  STATE.attacking = !STATE.attacking;
+  const btn   = document.getElementById('btn-attack');
+  const label = document.getElementById('btn-label');
+  if (STATE.attacking) {
+    btn.classList.add('active');
+    label.textContent = '⬛ ABORT ATTACK';
+    addLog('ATTACK', `Crosstalk injection launched — ${STATE.intensity} CNOT pairs/layer`, 'log-crit');
+    if (!STATE.defenses.some(d=>d)) {
+      addLog('WARN', 'No defenses active — victim unprotected', 'log-warn');
+    }
+  } else {
+    btn.classList.remove('active');
+    label.textContent = '⚡ LAUNCH ATTACK';
+    addLog('SYSTEM', 'Attack terminated — monitoring nominal', 'log-ok');
+  }
+}
+
+function setIntensity(val) {
+  STATE.intensity = parseInt(val);
+  if (STATE.attacking) {
+    addLog('ATTACK',
+      `Intensity updated: ${STATE.intensity} CNOT pairs — effective xt=${(computeXT()).toFixed(2)}`,
+      'log-crit');
+  }
+}
+
+function toggleDefense(n) {
+  const idx = n - 1;
+  STATE.defenses[idx] = !STATE.defenses[idx];
+  const btn = document.getElementById(`btn-d${n}`);
+  btn.classList.toggle('active', STATE.defenses[idx]);
+
+  const active = STATE.defenses.filter(Boolean).length;
+  document.getElementById('defense-count-badge').textContent =
+    `${active} DEFENSE${active!==1?'S':''}`;
+
+  if (STATE.defenses[idx]) {
+    const [src, msg] = Object.values(logMessages.defense)[idx];
+    addLog(src, msg, 'log-def');
+  } else {
+    addLog('DEFENSE', `[D${n}] Deactivated`, 'log-warn');
+  }
+}
+
+function setSpeed(val, el) {
+  STATE.speed = val;
+  document.querySelectorAll('.speed-btn').forEach(b => b.classList.remove('active'));
+  el.classList.add('active');
+}
+
+function setScenario(val, el) {
+  // Update scenario button highlights
+  document.querySelectorAll('.scenario-btn').forEach(b => b.classList.remove('active'));
+  if (el) el.classList.add('active');
+  // Sync slider
+  document.getElementById('slider-intensity').value = val;
+  setIntensity(val);
+  // Toggle attack state
+  if (val > 0 && !STATE.attacking) toggleAttack();
+  if (val === 0 && STATE.attacking)  toggleAttack();
+  // Scenario-specific terminal messages
+  const msgs = {
+    0:   ['SYSTEM',  'Attack cleared — monitoring nominal'],
+    25:  ['ATTACK',  'Scenario MILD: CX(12,13)×15 — monitoring degradation'],
+    55:  ['ATTACK',  'Scenario MODERATE: CX(12,13)×33 — TVD threshold exceeded'],
+    100: ['ATTACK',  'Scenario FULL: CX(12,13)×60 — HISTOGRAM COLLAPSE IMMINENT'],
+  };
+  const [src, msg] = msgs[val] || ['SYSTEM', `Custom intensity: ${val}%`];
+  addLog(src, msg, val === 0 ? 'log-ok' : val < 55 ? 'log-warn' : 'log-crit');
+}
+
+/* ── Hardware evidence injection (call from ACT 4 real-HW results) ── */
+function injectHardwareEvidence(jobId, backend, pCorrect, tvd, shots, role) {
+  addLog('IBM QUANTUM', `Job ${jobId} completed — backend: ${backend}`, 'log-ok');
+  addLog('SAMPLER',     `${shots.toLocaleString()} shots — P(|110⟩) = ${(pCorrect*100).toFixed(1)}%`, 'log-info');
+  let label, cls;
+  if (role === 'victim') {
+    // TVD 0.30–0.35 on victim circuits = hardware noise floor, not attack corruption
+    label = 'VICTIM BASELINE — HW NOISE';
+    cls   = 'log-warn';
+  } else if (role === 'attack') {
+    label = tvd > 0.5 ? 'COMPUTATION CORRUPTED' : 'SEVERELY DEGRADED';
+    cls   = 'log-crit';
+  } else {
+    // legacy bare call (backwards-compatible)
+    label = tvd > 0.3 ? 'COMPUTATION CORRUPTED' : tvd > 0.1 ? 'DEGRADED' : 'NOMINAL';
+    cls   = tvd > 0.3 ? 'log-crit' : tvd > 0.1 ? 'log-warn' : 'log-ok';
+  }
+  addLog('INTEGRITY',  `TVD vs ideal: ${tvd.toFixed(3)} — ${label}`, cls);
+  addLog('EVIDENCE',   `Reproducible: ibm.quantum.ibm.com/jobs/${jobId}`, 'log-def');
+}
+/* ════════════════════════════════════════════════════════════════
+   HARDWARE EVIDENCE PANEL — data + renderer
+   Completely independent from simulation STATE / controls.
+   ════════════════════════════════════════════════════════════════ */
+const HW_EVIDENCE = [
+  { id: 'd6spbovgtkcc73clrgj0', backend: 'ibm_torino',    role: 'victim',  p: 0.622, tvd: 0.33, shots: 8192 },
+  { id: 'd6spbp6sh9gc73dhq3hg', backend: 'ibm_torino',    role: 'attack',  p: 0.366, tvd: 0.57, shots: 8192 },
+  { id: 'd6spcaf90okc73esjd8g', backend: 'ibm_fez',       role: 'victim',  p: 0.633, tvd: 0.31, shots: 8192 },
+  { id: 'd6spcamsh9gc73dhq440', backend: 'ibm_fez',       role: 'attack',  p: 0.218, tvd: 0.73, shots: 8192 },
+  { id: 'd6spcg3bjfas73fooht0', backend: 'ibm_marrakesh', role: 'victim',  p: 0.626, tvd: 0.32, shots: 8192 },
+  { id: 'd6spcgesh9gc73dhq4c0', backend: 'ibm_marrakesh', role: 'attack',  p: 0.449, tvd: 0.50, shots: 8192 },
+];
+
+// Pre-group by backend for side-by-side comparison
+const HW_BY_BACKEND = {};
+HW_EVIDENCE.forEach(e => {
+  if (!HW_BY_BACKEND[e.backend]) HW_BY_BACKEND[e.backend] = {};
+  HW_BY_BACKEND[e.backend][e.role] = e;
+});
+
+function showEvidence(idx) {
+  const card   = document.getElementById('hw-card');
+  const badge  = document.getElementById('algo-status-badge');
+  const bsEl   = document.getElementById('bitstring-status');
+
+  // ── Clear selection ────────────────────────────────────────────
+  if (idx === '') {
+    card.style.display = 'none';
+    STATE.hwFreeze     = null;
+    if (badge) { badge.textContent = 'TARGET: |110⟩'; badge.style.color = ''; }
+    if (bsEl)  { bsEl.textContent = '✓ CORRECT RESULT'; bsEl.style.color = 'var(--green)'; }
+    return;
+  }
+
+  const e = HW_EVIDENCE[parseInt(idx)];
+  card.style.display = 'flex';
+
+  // ── Compute freeze state from real P(correct) ─────────────────
+  // Invert computeProbs: pTarget = IDEAL[6]*(1-xt) + 0.125*xt
+  //   → xt = (IDEAL[6] − p) / (IDEAL[6] − 0.125)
+  const hwXT    = Math.max(0, Math.min(0.99, (IDEAL_PROBS[TARGET_IDX] - e.p) / (IDEAL_PROBS[TARGET_IDX] - 0.125)));
+  const hwProbs = computeProbs(hwXT);
+  STATE.hwFreeze = { probs: hwProbs, xt: hwXT, e };
+
+  // ── Histogram panel badge ─────────────────────────────────────
+  if (badge) {
+    badge.textContent = `📡 HW: ${e.backend} · ${e.role.toUpperCase()}`;
+    badge.style.color = e.role === 'victim' ? 'var(--cyan)' : 'var(--red)';
+  }
+
+  // ── Topology bitstring-status overlay ─────────────────────────
+  if (bsEl) {
+    if (e.role === 'victim') {
+      bsEl.textContent = `HW BASELINE — ${(e.p*100).toFixed(1)}%`;
+      bsEl.style.color = 'var(--cyan)';
+    } else {
+      bsEl.textContent = e.p > 0.45
+        ? `⚠ DEGRADED — ${(e.p*100).toFixed(1)}%`
+        : `☠ CORRUPTED — ${(e.p*100).toFixed(1)}%`;
+      bsEl.style.color = e.p > 0.45 ? 'var(--amber)' : 'var(--red)';
+    }
+  }
+
+  // ── Card header ───────────────────────────────────────────────
+  document.getElementById('hw-backend').textContent = e.backend;
+  const roleBadge = document.getElementById('hw-role-badge');
+  roleBadge.textContent = e.role.toUpperCase();
+  roleBadge.className   = 'hw-role-badge ' + e.role;
+  document.getElementById('hw-job-id').textContent = 'Job: ' + e.id;
+
+  // ── P(correct) bar ────────────────────────────────────────────
+  const pColor = e.role === 'victim'
+    ? 'var(--cyan)'
+    : e.p < 0.35 ? 'var(--red)' : 'var(--amber)';
+  const pFill = document.getElementById('hw-p-fill');
+  pFill.style.width      = (e.p * 100).toFixed(1) + '%';
+  pFill.style.background = pColor;
+  const pVal = document.getElementById('hw-p-val');
+  pVal.textContent = (e.p * 100).toFixed(1) + '%';
+  pVal.style.color = pColor;
+
+  // ── TVD bar — victim gets amber (HW noise), attack gets red ──
+  const tvdColor = e.role === 'victim'
+    ? 'var(--amber)'
+    : e.tvd > 0.5 ? 'var(--red)' : 'var(--orange)';
+  const tvdFill = document.getElementById('hw-tvd-fill');
+  tvdFill.style.width      = (e.tvd * 100).toFixed(0) + '%';
+  tvdFill.style.background = tvdColor;
+  const tvdVal = document.getElementById('hw-tvd-val');
+  tvdVal.textContent = e.tvd.toFixed(3);
+  tvdVal.style.color = tvdColor;
+
+  // ── Backend comparison (always shows both roles) ──────────────
+  const pair = HW_BY_BACKEND[e.backend];
+  if (pair && pair.victim && pair.attack) {
+    const v = pair.victim, a = pair.attack;
+    document.getElementById('hw-cmp-v').style.width     = (v.p * 100).toFixed(1) + '%';
+    document.getElementById('hw-cmp-v-val').textContent = (v.p * 100).toFixed(1) + '%';
+    document.getElementById('hw-cmp-a').style.width     = (a.p * 100).toFixed(1) + '%';
+    document.getElementById('hw-cmp-a-val').textContent = (a.p * 100).toFixed(1) + '%';
+    document.getElementById('hw-delta').textContent     = 'Δ −' + ((v.p - a.p) * 100).toFixed(1) + ' pp ↓';
+    document.getElementById('hw-compare').style.display = 'flex';
+  }
+
+  // ── Status chip — role-aware (victims are never CORRUPTED) ────
+  const statusEl = document.getElementById('hw-status');
+  let chipLabel, chipCls;
+  if (e.role === 'victim') {
+    chipLabel = 'HW BASELINE'; chipCls = 'nominal';
+  } else {
+    chipLabel = e.tvd > 0.5 ? 'CORRUPTED' : 'DEGRADED';
+    chipCls   = e.tvd > 0.5 ? 'corrupted' : 'degraded';
+  }
+  statusEl.textContent = chipLabel;
+  statusEl.className   = 'hw-status ' + chipCls;
+
+  document.getElementById('hw-shots').textContent    = e.shots.toLocaleString() + ' shots';
+  document.getElementById('hw-verify-id').textContent = 'ibm.quantum.ibm.com/jobs/' + e.id;
+
+  // ── Mirror to terminal with role context ──────────────────────
+  injectHardwareEvidence(e.id, e.backend, e.p, e.tvd, e.shots, e.role);
+}
+
+function toggleRotation() {
+  rotationPaused = !rotationPaused;
+  const btn = document.getElementById('btn-rot');
+  btn.textContent = `3D ROTATION: ${rotationPaused ? 'OFF' : 'ON'}`;
+  btn.classList.toggle('active', !rotationPaused);
+  addLog('SYSTEM', `3D rotation ${rotationPaused ? 'paused — topology locked' : 'resumed'}`, 'log-info');
+}
+
+/* ════════════════════════════════════════════════════════════════
+   MAIN LOOP
+   ════════════════════════════════════════════════════════════════ */
+let lastLogTime = 0;
+
+function mainLoop(ts) {
+  requestAnimationFrame(mainLoop);
+  STATE.tick++;
+
+  // ── Simulation state (always computed — drives topology animation) ──
+  STATE.xt = computeXT();
+  const simProbs = computeProbs(STATE.xt);
+
+  // ── Display state — real HW freeze overrides histogram / UI / Bloch ──
+  const frozen     = STATE.hwFreeze;
+  const dispProbs  = frozen ? frozen.probs : simProbs;
+  const dispXT     = frozen ? frozen.xt    : STATE.xt;
+  STATE.pCorrect   = dispProbs[TARGET_IDX];
+  STATE.tvd        = computeTVD(dispProbs);
+
+  // Topology always runs on live simulation (attack demo stays live)
+  updateThree(STATE.xt);
+
+  // Histogram — frozen keeps micro-jitter so the panel looks alive
+  if (STATE.tick % 3 === 0) {
+    let histProbs;
+    if (frozen) {
+      const jitter = 0.003;
+      histProbs = frozen.probs.map(p => Math.max(0, p + (Math.random()-0.5)*jitter));
+      const sum = histProbs.reduce((a,b)=>a+b,0);
+      histProbs = histProbs.map(p => p/sum);
+      updateHistogram(histProbs, null);
+    } else {
+      const anyDefense = STATE.defenses.some(d=>d);
+      const noisy = computeProbs(STATE.xt + (Math.random()-0.5)*0.03*STATE.xt);
+      updateHistogram(noisy, anyDefense ? computeProbs(STATE.xt * 0.2) : null);
+    }
+  }
+
+  // Bloch spheres reflect display state
+  if (STATE.tick % 5 === 0) {
+    updateBlochSpheres(dispXT);
+  }
+
+  // UI metrics reflect display state
+  if (STATE.tick % 2 === 0) {
+    updateUI(dispXT, dispProbs);
+  }
+
+  // Log messages always from live simulation
+  if (ts - lastLogTime > 3500 / STATE.speed) {
+    scheduleLog(STATE.xt);
+    lastLogTime = ts;
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════
+   TERMINAL DRAG-TO-RESIZE
+   Drag the handle bar upward → terminal grows, main shrinks.
+   The CSS variable --terminal-h drives grid-template-rows so
+   Three.js + histogram respond via their existing resizeThree().
+   ════════════════════════════════════════════════════════════════ */
+const TERMINAL_MIN_H     = 60;   // px — header + one log line always visible
+const TERMINAL_MAX_H     = 560;  // px — leaves ≥52px header + some main area
+const TERMINAL_DEFAULT_H = 130;
+
+function _termH() {
+  const raw = getComputedStyle(document.documentElement)
+    .getPropertyValue('--terminal-h').trim();
+  return parseInt(raw) || TERMINAL_DEFAULT_H;
+}
+
+function _setTermH(h) {
+  const clamped = Math.max(TERMINAL_MIN_H, Math.min(TERMINAL_MAX_H, h));
+  document.documentElement.style.setProperty('--terminal-h', clamped + 'px');
+  resizeThree();   // keep WebGL canvas buffer in sync
+}
+
+function initDragHandle() {
+  const handle = document.getElementById('terminal-drag-handle');
+  let dragging = false, startY = 0, startH = TERMINAL_DEFAULT_H;
+
+  // ── Mouse ──────────────────────────────────────────────────
+  handle.addEventListener('mousedown', e => {
+    dragging = true;
+    startY   = e.clientY;
+    startH   = _termH();
+    handle.classList.add('dragging');
+    document.body.style.cursor = 'ns-resize';
+    e.preventDefault();
+  });
+
+  document.addEventListener('mousemove', e => {
+    if (!dragging) return;
+    // Moving UP (clientY decreases) → delta positive → terminal taller
+    _setTermH(startH + (startY - e.clientY));
+  });
+
+  document.addEventListener('mouseup', () => {
+    if (!dragging) return;
+    dragging = false;
+    handle.classList.remove('dragging');
+    document.body.style.cursor = '';
+    resizeThree();
+  });
+
+  // ── Touch (tablet / touchscreen presenter) ─────────────────
+  handle.addEventListener('touchstart', e => {
+    dragging = true;
+    startY   = e.touches[0].clientY;
+    startH   = _termH();
+    handle.classList.add('dragging');
+    e.preventDefault();
+  }, { passive: false });
+
+  document.addEventListener('touchmove', e => {
+    if (!dragging) return;
+    _setTermH(startH + (startY - e.touches[0].clientY));
+    e.preventDefault();
+  }, { passive: false });
+
+  document.addEventListener('touchend', () => {
+    if (!dragging) return;
+    dragging = false;
+    handle.classList.remove('dragging');
+    resizeThree();
+  });
+
+  // ── Double-click handle → toggle between compact and expanded ──
+  let _expanded = false;
+  handle.addEventListener('dblclick', () => {
+    _expanded = !_expanded;
+    _setTermH(_expanded ? 320 : TERMINAL_DEFAULT_H);
+    addLog('SYSTEM',
+      _expanded ? 'Log expanded — double-click handle to collapse'
+                : 'Log collapsed — double-click handle to expand',
+      'log-info');
+    // Smooth scroll to bottom so new messages are visible
+    const log = document.getElementById('terminal-log');
+    log.scrollTop = log.scrollHeight;
+  });
+}
+
+
+window.addEventListener('load', () => {
+  initThree();
+  initHistogram();
+  initDragHandle();
+
+  updateBlochSpheres(0);
+
+  // Boot log
+  addLog('SYSTEM',      'Quantum channel monitor initialised — ibm_hanoi online', 'log-info');
+  addLog('CALIBRATION', 'T₁ range: 79.7–289.3µs · T₂ range: 21.5–305.9µs', 'log-info');
+  addLog('TOPOLOGY',    'Coupling map loaded: 5-qubit segment [10–14] — ibm_hanoi', 'log-info');
+  addLog('GROVER',      'Algorithm loaded: 3-qubit Grover — target |110⟩ — ideal P=88.0%', 'log-ok');
+  addLog('SECURITY',    '⚠ Shared multi-tenant device — adversary scheduling ENABLED', 'log-warn');
+  addLog('EVIDENCE',    'HW validation: Harper et al. arXiv:2402.02753v2 — ibm_hanoi attack confirmed', 'log-def');
+  addLog('EVIDENCE',    'Use injectHardwareEvidence(jobId, backend, p, tvd, shots) to log real HW results', 'log-def');
+
+  // Defer first render to next frame so flex layout is fully computed,
+  // then resize again to guarantee the canvas buffer matches the real CSS dimensions.
+  requestAnimationFrame(() => {
+    resizeThree();
+    requestAnimationFrame(mainLoop);
+  });
+});
+</script>
+</body>
+</html>
